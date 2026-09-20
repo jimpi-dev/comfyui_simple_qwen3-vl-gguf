@@ -9,6 +9,7 @@
     },
     "_model_presets": {
         "Qwen3.5-9B-Q4_K_M": {
+            "server_url": "http://127.0.0.1:8080",
             "model_path": "H:\\LLM2\\Qwen3.5-9B-Q4_K_M\\Qwen3.5-9B-Q4_K_M.gguf",
             "mmproj_path": "H:\\LLM2\\Qwen3.5-9B-Q4_K_M\\mmproj-BF16.gguf",
             "output_max_tokens": 2048,
@@ -29,6 +30,7 @@
             "debug": true
         },
         "Qwen3-VL-8B": {
+            "server_url": "http://127.0.0.1:8080",
             "model_path": "..\\..\\..\\..\\LLM2\\Qwen3-VL-8B-Instruct-abliterated-v2.0.Q8_0\\Qwen3-VL-8B-Instruct-abliterated-v2.0.Q8_0.gguf",
             "mmproj_path": "..\\..\\..\\..\\LLM2\\Qwen3-VL-8B-Instruct-abliterated-v2.0.Q8_0\\Qwen3-VL-8B-Instruct-abliterated-v2.0.mmproj-Q8_0.gguf",
             "output_max_tokens": 2048,

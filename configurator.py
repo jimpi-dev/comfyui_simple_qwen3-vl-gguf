@@ -15,6 +15,11 @@ from aiohttp import web
 # -----------
 
 _ADVANCED_DEFAULTS = {
+    # llama-server
+    "server_url": "http://127.0.0.1:8080",
+    "api_key": "",
+    "request_timeout": 300,
+    "model": "",
     # model / paths
     "model_path": "",
     "mmproj_path": "",
@@ -292,18 +297,40 @@ class Qwen3VL_AdvancedConfig:
                 # ==================================================
                 "📁 Model & Paths": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Show/hide group: model and projector paths.",
+                    "tooltip": "Show/hide group: llama-server URL and optional GGUF path hints.",
+                }),
+                "server_url": ("STRING", {
+                    "default": "http://127.0.0.1:8080",
+                    "placeholder": "http://127.0.0.1:8080",
+                    "tooltip": "llama-server base URL. The node sends HTTP requests to /v1/chat/completions. GGUF files are loaded by llama-server, not by this node.",
+                }),
+                "api_key": ("STRING", {
+                    "default": "",
+                    "placeholder": "optional --api-key",
+                    "tooltip": "API key if llama-server was started with --api-key. Leave empty for a local server without auth.",
+                }),
+                "request_timeout": ("INT", {
+                    "default": 300,
+                    "min": 1,
+                    "max": 36000,
+                    "step": 1,
+                    "tooltip": "HTTP timeout in seconds for llama-server requests.",
+                }),
+                "model": ("STRING", {
+                    "default": "",
+                    "placeholder": "optional OpenAI model name",
+                    "tooltip": "Optional OpenAI model name sent in the request. Empty = use the model already loaded by llama-server (or the basename of model_path in router mode).",
                 }),
                 "model_path": ("STRING", {
                     "default": "",
                     "placeholder": "models/Qwen3-VL.gguf",
-                    "tooltip": "Path to GGUF model file. Relative paths are supported (relative to custom_nodes dir).",
+                    "tooltip": "Optional GGUF path hint / router model id. This node does NOT load the file. Start llama-server with -m yourself. Used as the OpenAI 'model' name when 'model' is empty.",
                 }),
                 #BUTTON MODEL BROWSE
                 "mmproj_path": ("STRING", {
                     "default": "",
                     "placeholder": "models/mmproj.gguf (optional)",
-                    "tooltip": "Path to multimodal projector file. Required for vision models.",
+                    "tooltip": "Optional mmproj path hint for documentation. Load it on llama-server with --mmproj. This node does not load mmproj.",
                 }),
                 #BUTTON MMPROJ BROWSE.
 
@@ -311,8 +338,8 @@ class Qwen3VL_AdvancedConfig:
                 # GROUP 2: MEMORY / CONTEXT
                 # ==================================================
                 "🗄️ Memory & Context": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Show/hide group: context, batches, memory pool, KV cache.",
+                    "default": False,
+                    "tooltip": "Show/hide group: llama-server CLI context/KV flags. These are NOT sent per HTTP request — set them when starting llama-server (-c, -b, --cache-type-k, ...).",
                 }),
                 "n_ctx": ("INT", {
                     "default": 8192,
@@ -444,7 +471,7 @@ class Qwen3VL_AdvancedConfig:
                 }),
                 "enable_thinking": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Enable thinking/reasoning process (for Gemma, Qwen, MiniCPM, GLM, etc.).",
+                    "tooltip": "Enable thinking/reasoning. Sent to llama-server as chat_template_kwargs.enable_thinking and reasoning_effort. For Qwen3-VL Instruct vs Thinking models, the GGUF chat template decides the exact tags.",
                 }),
                 "remove_thinking": ("BOOLEAN", {
                     "default": False,
@@ -470,8 +497,8 @@ class Qwen3VL_AdvancedConfig:
                 # GROUP 4: GPU / OFFLOAD / MULTI-GPU
                 # ==================================================
                 "⚙️ Hardware & Acceleration": ("BOOLEAN", {
-                    "default": True,
-                    "tooltip": "Show/hide group: GPU layers, MoE offload, threads, multi-GPU.",
+                    "default": False,
+                    "tooltip": "Show/hide group: llama-server CLI GPU/offload flags. These are NOT sent per HTTP request — set them when starting llama-server (-ngl, --cpu-moe, --split-mode, ...).",
                 }),
                 "n_gpu_layers": ("INT", {
                     "default": -1,
@@ -533,7 +560,7 @@ class Qwen3VL_AdvancedConfig:
                 }),
                 "chat_handler": (CHAT_HANDLERS, {
                     "default": "none",
-                    "tooltip": "Chat handler for multimodal models.",
+                    "tooltip": "Legacy chat-handler name from llama-cpp-python. Ignored: llama-server uses the GGUF Jinja chat template.",
                 }),
                 "chat_format": (CHAT_FORMATS, {
                     "default": "none",
@@ -675,7 +702,7 @@ class Qwen3VL_AdvancedConfig:
                 # ==================================================
                 "⚡ Speculative Decoding": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Show/hide group: speculative decoding parameters (requires llama-cpp-python >= 0.3.48).",
+                    "tooltip": "Show/hide group: speculative decoding. Per-request flags are ignored; enable speculative decoding on llama-server itself (draft model CLI).",
                 }),
                 "speculative_enabled": ("BOOLEAN", {
                     "default": False,
@@ -765,11 +792,11 @@ class Qwen3VL_AdvancedConfig:
                 }),
                 "extract_embedding": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Switch node to embedding mode. Uses LlamaEmbedding. Text output is replaced by a CONDITIONING tensor.",
+                    "tooltip": "Switch node to embedding mode. Calls llama-server POST /embedding (fallback /v1/embeddings). The server must be started with embedding support. Text output is replaced by a CONDITIONING tensor.",
                 }),
                 "pooling_type": (list(POOLING_TYPES.keys()), {
                     "default": "0=NONE",
-                    "tooltip": "Pooling strategy for LlamaEmbedding. NONE = no pooling (per-token embeddings), MEAN = average pool, CLS = use [CLS] token, LAST = use last token.",
+                    "tooltip": "Pooling strategy for llama-server embeddings. NONE = no pooling (per-token embeddings), MEAN = average pool, CLS = use [CLS] token, LAST = use last token. Server --pooling also matters.",
                 }),
                 "tokenizer_path": ("STRING", {
                     "default": "",
@@ -799,7 +826,7 @@ class Qwen3VL_AdvancedConfig:
                 }),
                 "verbose": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Enables verbose logging from llama.cpp.",
+                    "tooltip": "Kept for compatibility. llama-server verbosity is a server CLI flag (-v), not a per-request field.",
                 }),
                 "debug": ("BOOLEAN", {
                     "default": True,
@@ -887,6 +914,12 @@ class Qwen3VL_AdvancedConfig:
         # --------------------------------------------------------------
 
         local_params = {
+            # llama-server
+            "server_url": g("server_url", "http://127.0.0.1:8080"),
+            "api_key": g("api_key", ""),
+            "request_timeout": g("request_timeout", 300),
+            "model": g("model", ""),
+
             # model / paths
             "model_path": g("model_path", ""),
             "mmproj_path": g("mmproj_path", ""),
@@ -1556,7 +1589,7 @@ class Qwen3VL_ModelConfig:
                 }),
                 
                 # === ОПЦИОНАЛЬНЫЕ: Отладка ===
-                "verbose": ("BOOLEAN", {"default": False, "tooltip": "Verbose llama.cpp logging"}),
+                "verbose": ("BOOLEAN", {"default": False, "tooltip": "Kept for compatibility. llama-server verbosity is a CLI flag (-v)."}),
                 "debug": ("BOOLEAN", {"default": True, "tooltip": "Output timing info to console"}),
 
                 "type_k": (list(GGML_TYPES_OLD.keys()), {"default": "F16"}),
