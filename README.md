@@ -111,6 +111,21 @@ curl http://127.0.0.1:8080/v1/models
 
 The ComfyUI node then posts to `http://127.0.0.1:8080/v1/chat/completions`.
 
+### llama-swap (model switching)
+
+If you already run [llama-swap](https://github.com/mostlygeek/llama-swap) in the LAN:
+
+1. Enable **use_llama_swap** on `🌐 LLM Inference (SQVLM)`.
+2. Set **llama_swap_url** to the swap address, e.g. `http://192.168.0.10:8080` (empty = `server_url`).
+3. Click **Refresh llama-swap models**. The **llama_swap_model** combobox fills from `GET /v1/models`.
+4. Pick a model. On queue the node loads it (`POST /api/models/load/{id}` or `GET /upstream/{id}`) and then calls `/v1/chat/completions` with that `model` name so llama-swap swaps if needed.
+5. **llama_swap_log_lines** (default 200) tails `GET /logs` into the `llama_swap_log` output and the on-node preview.
+
+```bash
+curl http://192.168.0.10:8080/v1/models
+curl http://192.168.0.10:8080/logs
+```
+
 Official docs:
 - llama.cpp: https://github.com/ggml-org/llama.cpp
 - Multimodal: https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md
