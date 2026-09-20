@@ -1,9 +1,9 @@
 [project]
 name = "ComfyUI_Simple_Qwen3-VL-gguf"
-description = "Simple Qwen3-VL gguf LLM model loader"
-version = "3.9"
+description = "ComfyUI node for Qwen3-VL and other GGUF VL models via llama.cpp llama-server HTTP API"
+version = "4.0"
 license = {file = "LICENSE"}
-dependencies = ["llama-cpp-python"]
+dependencies = ["pillow", "json_repair", "colorama", "opencv-python", "av"]
 
 [project.urls]
 Repository = "https://github.com/KLL535/ComfyUI_Simple_Qwen3-VL-gguf"

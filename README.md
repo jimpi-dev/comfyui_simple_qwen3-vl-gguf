@@ -1,282 +1,120 @@
 <img width="2048" height="448" alt="15184-43452264163153+" src="https://github.com/user-attachments/assets/92b22216-aa55-4411-8718-8ec82e1b88b6" />
 
-Simple gguf LLM Qwen3-VL, Qwen3.5-3.8, Gemma4 and others model loader for Comfy-UI.
+ComfyUI node for **Qwen3-VL** and other GGUF vision-language models.
 
-# Why need this version?
-This version was created to meet my requirements:
-1. The model must support gguf (gguf models run faster than transformer models).
-2. The model must support the Qwen3-VL, Qwen3.5-3.8, Gemma4 multimodal model.
-3. The node should be easily adaptable to work with any new released model.
-4. After running, the node must be completely cleared from memory, leaving no garbage behind. This is important. Next come very resource-intensive processes that require ALL the memory. (Yes, the model will have to be reloaded every time, but this is better than storing the model as dead weight while heavier tasks suffer from lack of memory and run slower).
-In the latest update added a new `keep_vram` mode, which allows you to keep the model from being unloaded from memory. Convenient for small models and batch modes.
-5. No auto-loaded models. You can use any models you already have (from LM Studio etc). Just simply specify their path on the disk to config. 
+The node talks to an external **llama.cpp `llama-server`** over HTTP. Python never loads GGUF files.
+
+```text
+ComfyUI
+   │
+   │ HTTP / OpenAI-compatible API
+   ▼
+llama-server   (-m Qwen3-VL-*.gguf --mmproj mmproj-*.gguf)
+```
+
+**No `llama-cpp-python` required.**
+
+# Why this node?
+1. GGUF models (faster than typical transformer loaders in ComfyUI).
+2. Qwen3-VL, Qwen3.5, Gemma4 and other multimodal GGUFs that current llama.cpp already supports.
+3. Easy to point at any new GGUF: start llama-server with `-m` / `--mmproj`, then set `server_url` on the node.
+4. ComfyUI stays clean. The LLM and mmproj live in the llama-server process, so diffusion workflows are not fighting a Python-bound llama.cpp for VRAM.
+5. No auto-downloaded models. Use GGUFs you already have (Hugging Face, LM Studio exports, etc.). Start llama-server with those files.
 
 # Last update:
 
+**4.0 — llama-server backend**
+
+- Replaced `llama-cpp-python` with native `ggml-org/llama.cpp` `llama-server`.
+- ComfyUI sends OpenAI-compatible `/v1/chat/completions` requests (images as base64 data URLs).
+- Thinking uses llama-server `chat_template_kwargs.enable_thinking` / `reasoning_effort`.
+- Model loading, GPU offload (`-ngl`), context (`-c`) and mmproj (`--mmproj`) are llama-server CLI flags, not Python bindings.
+
 **Nightly (tests)**
 
-- Add `streaming_mode`, refactor subprocess mode - the process is now interruptible.
-- Add speculative decoding
-> ⚠️ **Important Limitations**: Incompatible with multimodal inputs (images, video, audio), requires `llama-cpp-python` version 0.3.48 or higher, disabled by default.
-
+- Add `streaming_mode`
+- Add speculative decoding (now a llama-server CLI feature, not a Python SpecConfig)
 - Add dynamic image, audio, video input, Add "user_prompt_template" input, Add "bypass" input
 - New design for LLM Config
 - **Added new configurator 🌐 LLM Config and 🌐 LLM Prompt Preset**
-  
-The new advanced configurator brings a completely redesigned configuration experience with the following advantages:
+
+The advanced configurator still exposes sampling, prompts, media limits and (as documentation) llama-server CLI-related fields.
 
 **Key Features:**
 
-1. Built-in Preset Management - Direct access to JSON preset files from within ComfyUI. You can now add new models, delete, or rename presets without manually editing JSON files. The preset browser integrates seamlessly with save/rename/delete buttons right in the node interface.
-2. Complete Parameter Access - All 73+ parameters currently supported by the system are available in one place. To prevent overwhelming users, parameters are organized into 9 collapsible groups (Model & Paths, Memory & Context, Sampling & Generation, etc.). Only essential parameters are visible by default; advanced settings remain hidden until needed.
-3. Windows File Browser - For Windows users, dedicated Browse Model and Browse MMProj buttons allow selecting GGUF files from anywhere on your disk, not just ComfyUI's predefined folders. No more manual path typing!
-4. Flexible Widget Layout - The configurator now supports easy rearrangement and insertion of new (future) parameter. Previously, adding a new parameter to the middle would displace all the others, corrupting old saves. With the new approach, this problem no longer exists.
+1. Built-in Preset Management - Direct access to JSON preset files from within ComfyUI.
+2. Complete Parameter Access - Sampling, thinking, media and server URL in one place. Hardware/context widgets remain for documentation of the llama-server command line; they are not applied per HTTP request.
+3. Windows File Browser - Browse buttons still help you note GGUF paths when writing a llama-server command.
+4. Flexible Widget Layout - Adding new parameters does not corrupt old saves.
 
 <img width="1122" height="590" alt="image" src="https://github.com/user-attachments/assets/c960ccd4-c400-448e-8def-45cbb301a327" />
 
-> 💡 **TIP:** If you need to move preset lists to the top level of the subgraph, use widgets of the LLM Inference node — they work in the classic Comfi-UI way.
+> 💡 **TIP:** If you need to move preset lists to the top level of the subgraph, use widgets of the LLM Inference node — they work in the classic Comfy-UI way.
 
-<details>
+# Prerequisites
 
-<summary>History</summary>
+-------------
+- ComfyUI
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) / `llama-server` (current official build)
+- A Qwen3-VL (or other supported VL) GGUF **and** matching `mmproj` GGUF
 
-- Added `words_to_ban` config (logit_bias).
-- Added `📸 Simple Gif Maker` node.
-- Added `📸 Load Video Fragment` node. What makes this node different from others? It can download a file of any size, but it does NOT copy it to the input folder. At the same time it has browse button, crop, resize and timeline.
-- Added Bernini presets.
-- Add `_user_prompt_template` functionality. Now you can modify the user_prompt using a specified template (the name of which matches the system_preset)
-- Add `variables` input. You can now set any user placeholders in {} in the system and user prompts.
-- Added autocomplete placeholders `width`, `height`, `image_num`, `ref_num`, `audio_num`, `frame_num`, `user_prompt`. By default, placeholder replase is disabled for backward compatibility. It can be enabled by passing user variables to the `variables` input (just like the config input) or by using `_user_prompt_template`, or by forcing it by entering `"enable_variables": true,` in config.
-- Added the `add_image_id`, `add_audio_id`, and `add_frame_id` configurations, which allow you to number the corresponding content according to a specified template before inserting it.
-- An additional configuration file has been added to the following path: `ComfyUI\user\SimpleQwenVL_configs\system_prompts_user.json`. 
-- improvement of video input (part 1)
-- fix UnicodeDecodeError error in subprocess
-- add node `Ideogram 4 JSON Preview` and `Ideogram 4 JSON Swap XY Coordinates`
-- present_penalty/presence_penalty issue
-  
-**16.06.2026 - V3.9**
-- Fix f-string: unmatched caused by nested double quotes
-- Fix disappearance of "\n" line breaks in `raw_mode`
+**No llama-cpp-python required.**
 
-**22.05.2026 - V3.8**
-- Added example `qwen_vl_test_translate`
-- Added modes: `save1`, `save2`, `save3`
-- Added example `qwen_vl_test_image_storytaler`
-- Added utils: `Simple Text To Batch`, `Simple Text Insert`, `Simple Text Replace`, `Simple Join Strings`
-- Added simple LLM configurator
-- Improved error output
-  
-**03.05.2026 - V3.7**
-- Added `force_mmproj` settings.
-- Added support for `n_cpu_moe`, `cpu_moe`. Requires llama_cpp_python update to 0.3.37+. See the limitations in the `Speed ​​test and memory overflow problem section` below.
-- Standard parameter names are now supported
-- Added debug calculate `token/sec`
-- Added options for running encoder (to obtain `embeddings` or `conditioning`)
-- Added video input (while llama.cpp doesn't have native support yet, you can pass a reduced set of frames, see example)
-- Added audio input (see example)
-- Added `split_mode` settings for multi GPU
+Do not pin an old llama.cpp just because earlier versions of this node used Python bindings. Use a **current** `ggml-org/llama.cpp` release.
 
-**04.04.2026 - V3.6**
-- Add Gemma4 support.
-- Fix `raw_mode` in text mode.
-  
-**08.03.2026 - V3.5**
-- TurboQuants feature (for now requires a fork of llama.cpp)
-- Adding a new mode `"raw_mode": true` which allows you to set custom `prompt templates`. The Joycaption model now works correctly (see new configs below).
-- Three execution modes have been added: `subprocess` — inference runs in a separate process (safe, isolated); `direct_clean` — in the main process with model unloading after each run; `keep_vram` — the model remains in VRAM for repeated use.
-- Added `config_override` - the ability to add/override any configuration parameters via a text input directly in the node
-- Integrated **json_repair** to automatically repair invalid JSON in `config_override` and `system_prompts_user.json`
-- Expanded documentation on configuration fields and operating modes
+### Start llama-server (Linux / macOS)
 
-**04.03.2026 - V3.2**
-- Added support for Qwen3.5
-
-</details>
-
-# Correct installation of llama-cpp-python:
-
-Qwen3 support hasn't been added to the standard library, `llama-cpp-python`, which is downloaded via `pip install llama-cpp-python` - this didn't work.
-The standard version `llama-cpp-python` hasn't been updated for a long time.
-`llama-cpp-python` 0.3.16 last commit on Aug 15, 2025 and it doesn't support qwen3.
-
-Check the version number of llama-cpp-python from **JamePeng** you're using:
-- Version 0.3.17 or latest supports qwen3-VL.
-- Version 0.3.30 or latest supports qwen3.5.
-- Version 0.3.35 or latest supports gemma4.
-
-### Variant 1 - Download WHL
-
-<details>
-
-<summary> Download WHL packages for your configuration</summary>
-
-- https://github.com/JamePeng/llama-cpp-python/releases
-  
-For example:
-```
-cd *path_to_comfyui*\python_embeded
-
-python -m pip install json_repair,colorama
-
-python -m pip install temp\llama_cpp_python-0.3.18-cp313-cp313-win_amd64.whl
+```bash
+llama-server \
+  -m Qwen3-VL-8B-Instruct-Q4_K_M.gguf \
+  --mmproj mmproj-Qwen3-VL-8B-Instruct-F16.gguf \
+  -ngl 99 \
+  -c 8192 \
+  --port 8080 \
+  --jinja
 ```
 
-> 💡 **WARNING:** These ready-made **basic** VHLs may not have CPU acceleration implementations. Therefore, installing them may not yield any benefit from `n_cpu_moe` or `cpu_moe`. Use VHL with optimizations enabled, or better yet, compile the project yourself for your hardware.
-
-> 💡 **Tip:** In subprocess mode, you can launch it immediately. In other modes, you need to restart Comfy-UI.
-
-</details>
-
-### Variant 2 - Build from source code (I recommend this variant)
-
-<details>
-
-<summary>Installing software before compilation</summary>
-
-1. Check that you have **CUDA Toolkit** installed.
-For example: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0`
-- Try installing: https://developer.nvidia.com/cuda-downloads
-- Check that the **PATH** in Environment Variables includes the **CUDA Toolkit** bin folder (For example: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin`).
-- After installing CUDA Toolkit, restart your computer.
-
-2. Check that the **NVIDIA Driver** and CUDA Toolkit versions match (the driver can and most often should be newer than the CUDA Toolkit version):
-Run command in CMD `nvidia-smi`.
-
-3. Check that you have **Visual C++ Redistributable** installed. 
-- Try installing: https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170
-- Install both versions (x86 and x64).
-
-4. Check that you have **Visual Studio 2022** installed. 
-- Install Visual Studio 2022.  
-- Install the following packages (they will not be installed by default):
-  
-☑ Desktop development with C++ (in Workloads tab).
-
-☑ MSVC v143 - VS 2022 C++ x64/x86 build tools (in Individual components tab).
-
-☑ Windows 10/11 SDK (in Individual components tab).
-
-☑ CMake tools for Visual Studio (in Individual components tab).
-
-- The environment variable for MSVC is not added to the **PATH** by default.
-Run this command every time in your terminal before compiling:
-`call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"`
-
-5. If you use **python_embeded** for Comfy-UI, may need to add missing libs folders: `python_embeded\include`, `python_embeded\libs` (Not Lib\site-packages), `python_embeded\DLLs`:
-- From here https://github.com/astral-sh/python-build-standalone/releases download Python **appropriate** version (for example `cpython-3.13.11+20251217-x86_64-pc-windows-msvc-install_only.tar.gz`)
-- unzip and copy the necessary folders to `python_embeded`.
-   
-</details>
-
-<details>
-
-<summary>Build llama-cpp-python from source code</summary>
-
-1. Clone the repositories using Git:
-- https://github.com/JamePeng/llama-cpp-python
-- https://github.com/ggml-org/llama.cpp
-```
-git clone https://github.com/JamePeng/llama-cpp-python.git
-git clone https://github.com/ggml-org/llama.cpp.git
-```
-2. Move the second project `llama.cpp\` in the `llama-cpp-python\vendor\` folder
-
-3. Automatically set the paths to MSVC (Windows only):
-```
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-```
-
-<details>
-
-<summary>4. Optional: For fast build with Ninja</summary>
-
-Using Ninja enables parallel compilation across CPU cores, significantly reducing build time (but may increase CPU temperature).
-Verify Ninja is installed with Visual Studio 2022:
-
-```
-ninja --version
-1.12.1
-```
-- Configure environment variables (replace 32 with your desired number of cores):
-
-```
-set CMAKE_GENERATOR=Ninja
-set MAX_JOBS=16
-``` 
-
-</details>
-
-5. Go to the llama-cpp-python folder
-```
-cd *path_to_src*\llama-cpp-python
-```
-6. Set CUDA support and install the package: 
-
-```
-*path_to_comfyui*\python -m pip install json_repair,colorama
-
-set CMAKE_ARGS=-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=120 -DGGML_CUDA_FA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_BUILD_TYPE=Release
-*path_to_comfyui*\python_embeded\python -m pip install . 
-```
-
-✅ The command above is for embedded Python (typical for ComfyUI). Adjust the Python path if you're using a system or virtual environment.
-
-Replace 120 with your сompute сapability number:
-```
-RTX 50-series (Blackwell) → 120
-RTX 40-series → 89
-RTX 30-series → 86
-RTX 20-series → 75
-```
-
-⏱️ Build time: Without Ninja, compilation may take 30–60 minutes depending on your hardware.
-
-⏱️ Build time: With Ninja, compilation may take 1–2 minutes depending on your hardware.
-
-> 💡 **Tip:** In subprocess mode, you can launch it immediately. In other modes, you need to restart Comfu-ui.
-
-</details>
-
-<details>
-
-<summary>Simple bat file for fast rebuild</summary>
+### Start llama-server (Windows)
 
 ```bat
-cd llama-cpp-python\vendor\llama.cpp\
-git pull
-cd ..\..\
-git pull --rebase
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-set CMAKE_GENERATOR=Ninja
-set MAX_JOBS=16
-set CMAKE_ARGS=-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=120 -DGGML_CUDA_FA=ON -DGGML_CUDA_FA_ALL_QUANTS=ON -DCMAKE_BUILD_TYPE=Release
-H:\ComfyUI128\python_embeded\python.exe -m pip install . --no-cache-dir --no-build-isolation
-pause
+llama-server.exe ^
+  -m Qwen3-VL-8B-Instruct-Q4_K_M.gguf ^
+  --mmproj mmproj-Qwen3-VL-8B-Instruct-F16.gguf ^
+  -ngl 99 ^
+  -c 8192 ^
+  --port 8080 ^
+  --jinja
 ```
 
-✅ The command above is for embedded Python (typical for ComfyUI). Adjust the Python path if you're using a system or virtual environment.
+Useful flags (current llama.cpp):
 
-Replace 120 with your сompute сapability number:
+| Flag | Meaning |
+|------|---------|
+| `-m` / `--model` | Text GGUF |
+| `--mmproj` | Vision projector GGUF |
+| `-ngl` / `--n-gpu-layers` | GPU offload (`99` or `all` = as many as fit) |
+| `-c` / `--ctx-size` | Context size |
+| `--port` | HTTP port (default `8080`) |
+| `--jinja` | Use the GGUF chat template (recommended for Qwen3-VL thinking) |
+| `--reasoning on\|off\|auto` | Default thinking behaviour for the whole server |
+| `--no-mmproj-offload` | Keep the projector on CPU |
+| `--image-min-tokens` / `--image-max-tokens` | Dynamic-resolution vision token limits |
+
+Or download a ready-made pair, for example from [Qwen3-VL GGUF](https://huggingface.co/Qwen) / [ggml-org multimodal GGUFs](https://huggingface.co/collections/ggml-org/multimodal-ggufs-68244e01ff1f39e5bebeeedc).
+
+Confirm the server is up:
+
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/v1/models
 ```
-RTX 50-series (Blackwell) → 120
-RTX 40-series → 89
-RTX 30-series → 86
-RTX 20-series → 75
-```
 
-> 💡 **Tip:** In subprocess mode, you can launch it immediately. In other modes, you need to restart Comfu-ui.
+The ComfyUI node then posts to `http://127.0.0.1:8080/v1/chat/completions`.
 
-</details>
-
-### CUDA Support
-
-This project requires CUDA runtime libraries. They can be sourced from:
-- The **CUDA Toolkit**: https://developer.nvidia.com/cuda-downloads *(recommended)*
-- OR an existing **PyTorch** installation 
-
-> 💡 **Tip:** If you use ComfyUI, you likely already have PyTorch. In that case, you probably **don't need to install the CUDA Toolkit separately** — the necessary libraries will be found automatically.
-
-> 💡 **Tip:** After installing **CUDA Toolkit**, restart your computer.
+Official docs:
+- llama.cpp: https://github.com/ggml-org/llama.cpp
+- Multimodal: https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md
+- Server API: https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
 
 # Installation of ComfyUI_Simple_Qwen3-VL-gguf:
 1.Installation to custom_nodes
@@ -291,8 +129,24 @@ This project requires CUDA runtime libraries. They can be sourced from:
 
 # Implementation Features:
 
-The node is split into two parts. All work is isolated in a subprocess. Why? To ensure everything is cleaned up and nothing unnecessary remains in memory after this node runs and llama.cpp. I've often encountered other nodes leaving something behind, and that's unacceptable to me.
-> 💡 **Update:** The llama_python_cpp code has been improved and no longer leaks memory, so it is now possible to call llama_cpp directly.
+ComfyUI never loads GGUF files. The node is an HTTP client:
+
+```text
+┌───────────────────────────────┐
+│            ComfyUI            │
+│  Qwen3-VL ComfyUI Node        │
+│  No llama.cpp Python API      │
+└───────────────┬───────────────┘
+                │ HTTP  /v1/chat/completions
+                ▼
+┌───────────────────────────────┐
+│         llama-server          │
+│     current llama.cpp         │
+│     Qwen3-VL GGUF + mmproj    │
+└───────────────────────────────┘
+```
+
+Images are converted `ComfyUI IMAGE → JPEG → base64 data URL → OpenAI multimodal message`. Sampling (temperature, top-p, top-k, max tokens, stop, seed) is sent per request. GPU layers, context size and mmproj are set when you start llama-server.
 
 # Nodes
 
@@ -305,7 +159,7 @@ The node is split into two parts. All work is isolated in a subprocess. Why? To 
 - **Master Prompt Loader** - Loads system prompt presets from JSON configuration files. Supports override via an optional string input. Ensures consistency across complex workflows.
 - **Simple Style Selector** - Loads user prompt style presets. Can randomly select a style or apply a named preset, appending it to the user prompt for dynamic generation variation.
 - **Simple Camera Selector** - Similar to Style Selector, but for camera-related descriptions (lens, lighting, angle). Appends photographic context to the user prompt.
-- **Simple Qwen Unload** - Forces unloading of the currently loaded model from VRAM. Essential when using `keep_vram` mode to manually free memory, or to reset the state before loading a new configuration.
+- **Simple Qwen Unload** - Legacy pass-through. llama-server owns the GGUF; stopping the server (or router `POST /models/unload`) frees VRAM. Kept so old graphs still run.
 - **Simple Remove Think** - Cleans model output by removing `<think>...</think>` sections. Designed for reasoning models (DeepSeek-R1, Qwen-thinking) to return only the final, cleaned response.
 - **Simple Trigger Node** - Enforces execution order in complex workflows. Prevents heavy nodes (like `Load Checkpoint`) from executing prematurely and occupying VRAM unnecessarily.
 - **Simple Text To Batch** - Splits LLM output by a given separator into a text batch, allowing you to extract multiple scenes or items from a single request.
@@ -336,10 +190,11 @@ A universal version. The model and its parameters mast be passed to the `config_
 
 | Mode | Characteristics | Benefits |
 |--------|--------|--------|
-| subprocess | Inference runs in a separate Python process. The model is loaded and unloaded for each execution. |	✅ Complete isolation – no VRAM leaks. ✅ Safe main script - no crash. 💡 Frees VRAM after each use. |
-| direct_clean | Inference runs in the main ComfyUI process. The model is cached between calls, but unloaded immediately after each inference (VRAM freed). Images are transmitted directly (no temporary files).	| ✅ Faster than subprocess (no process spawn overhead). 💡 Still frees VRAM after each use. |
-| keep_vram | Inference runs in the main ComfyUI process. The model stays loaded in VRAM after the first inference, and is reused for subsequent calls with the same config hash. |	✅ Maximum speed for batch processing or iterative workflows. 💡 When switching the mode to `direct_clean` or `subprocess`, this cache will be unloaded. | 
-| save1-save3 | Allows you to keep the model in VRAM for a long time, if it makes sense. The difference with the `keep_vram` mode is that the model is not cleared after switching modes, and the only way to unload the model is to use the `UnloadQwenModel` node and unload a specific cache or all caches. | ✅ Suitable for storing small models in memory, such as local translators or embedders. 💡 The main thing is to remember unload model manually from VRAM when no longer needed. | 
+| keep_vram (default) | HTTP to llama-server. The GGUF stays loaded in the server process. | Natural architecture. Repeated requests reuse the already-loaded model and mmproj. |
+| subprocess / direct_clean / save1-save3 | Kept for existing workflows. Inference is still HTTP; these modes no longer load or unload a local GGUF. | Old graphs keep working. VRAM of the LLM is controlled by llama-server, not by this widget. |
+
+> Stop llama-server when you need the GPU back for a heavy diffusion checkpoint. The ComfyUI node cannot unload the server-side model in single-model mode.
+
 
 </details>
 
@@ -348,20 +203,17 @@ A universal version. The model and its parameters mast be passed to the `config_
 <summary>Parameters</summary>
 
 ### Parameters:
-- `image`, `image2`, `image3`... (dynamic added inputs): *IMAGE* - The images to be analyzed. Batch processing is supported.
-- `audio`, `audio2`, `audio3`... (dynamic added inputs): *AUDIO* - The audio files to be analyzed (loaded via Load Audio). 💡 Note: The model must support audio (e.g., Gemma4-12B). See the audio_sample_rate parameter.
-- `video`, `video2`, `video3`... (dynamic added inputs): *** - VIDEO — The video files to be analyzed (loaded via Load Video) or an image batch (loaded via Load Video 🎥🅥🅗🅢). The video is processed as a reduced set of frames (see the max_frames parameter). 💡 Requires an increased context window (n_ctx). 💡 A large number of frames/files increases context length, which consumes more VRAM; smaller models may lose details. A balance must be struck based on your hardware. 💡 Due to the large file size involved in data transfer, this feature is incompatible with `subprocess` mode.
+- `image`, `image2`, `image3`... (dynamic added inputs): *IMAGE* - The images to be analyzed. Batch processing is supported. Encoded as JPEG base64 data URLs for llama-server.
+- `audio`, `audio2`, `audio3`... (dynamic added inputs): *AUDIO* - The audio files to be analyzed (loaded via Load Audio). 💡 Note: The **loaded llama-server model** must support audio (e.g. Gemma 4). See the audio_sample_rate parameter.
+- `video`, `video2`, `video3`... (dynamic added inputs): *** - VIDEO — The video files to be analyzed (loaded via Load Video) or an image batch. By default the video is sent as a reduced set of JPEG frames (`max_frames`). Set `"native_video": true` in config to send llama-server `input_video` instead (ffmpeg on the server). 💡 Increase llama-server `-c` / `--ctx-size` for many frames.
 - `model preset`: *LIST* - Selects a model based on templates defined in `system_prompts_user.json`.
 - `system preset`: *LIST* - Selects a system prompt from predefined templates.
 - `user prompt`: *STRING*, default: "Describe this image" - The specific prompt for the task, which can include input data and variable placeholders.
 - `seed`: *INT*, default: 42
-- `unload_all_models`: *BOOLEAN*, default: false - If True, clears the memory before starting.
-- `mode`: *LIST*, default: "subprocess" - The operating mode:
-`subprocess` — Isolates llama.cpp to prevent memory leaks. The model is completely unloaded from memory after each inference, preventing ComfyUI crashes in case of critical errors.
-`direct-clean` — Unloads the model after inference but operates directly, avoiding the overhead of calling a subprocess.
-`keep-vram` — Does not unload the model; keeps it in VRAM until another node with a different mode or the Simple Qwen Unload node is executed. This is highly useful for batch processing to avoid unnecessary model loading/unloading when executing consecutive LLM tasks.
-`save1, save2, save3` — Auxiliary modes for long-term storage of models in VRAM.
-- `config override`: *STRING*, default: None - Overrides specific fields in the model preset template, or defines an entirely new model configuration if model preset is set to None.
+- `server_url`: *STRING*, default: `http://127.0.0.1:8080` - llama-server base URL. Optional `model` / `api_key` / `request_timeout` go in config.
+- `unload_all_models`: *BOOLEAN*, default: false - If True, unloads **ComfyUI diffusion models** before the HTTP call. Does not stop llama-server.
+- `mode`: *LIST*, default: `keep_vram` - Legacy widget. All values use HTTP against llama-server.
+- `config override`: *STRING*, default: None - Overrides specific fields in the model preset template, or defines an entirely new model configuration if model preset is set to None. Example: `server_url: http://127.0.0.1:8080`
 - `system prompt override`: *STRING*, default: None - If text is provided here, it will be used as the system prompt, and the **system preset will be ignored**.
 - `user_prompt_template`: *STRING*, default: None - Allows you to set a custom user prompt template using {user_prompt} and other placeholders. When provided, automatic placeholder replacement is enabled.
 - `variables`: *STRING*, default: None - Allows you to define custom user placeholders enclosed in curly braces {} for use in the system and user prompts. When provided, automatic placeholder replacement is enabled.
@@ -415,8 +267,14 @@ Possible model configurations that can be passed to the `config_override` input.
 | Field | Type | Default | Description |
 |--------|--------|--------|--------|
 | model_preset | dropdown | None | Select from saved model presets. Presets are loaded from `system_prompts_user.json` |
-| model_path | string | "" | Path to GGUF model file. Relative paths are supported. The path is specified relative to `ComfyUI\custom_nodes\ComfyUI_Simple_Qwen3-VL-gguf`. Windows only: Use "Browse Model" button to select from file dialog |
-| mmproj_path | string | "" | Path to multimodal projector file (required for vision models). Windows only: Use "Browse MMProj" button |
+| server_url | string | http://127.0.0.1:8080 | llama-server base URL. The node POSTs to `{server_url}/v1/chat/completions` |
+| api_key | string | "" | Optional. Only needed if llama-server was started with `--api-key` |
+| request_timeout | int | 300 | HTTP timeout in seconds |
+| model | string | "" | Optional OpenAI model name. Empty = the model already loaded by llama-server (or basename of `model_path` in router mode) |
+| model_path | string | "" | Optional GGUF path **hint** / router model id. This node does **not** load the file. Start llama-server with `-m` yourself |
+| mmproj_path | string | "" | Optional mmproj path hint. Load it on llama-server with `--mmproj` |
+
+> Hardware (`n_gpu_layers`, `n_ctx`, `n_batch`, `cpu_moe`, …) and speculative-decoding widgets are **llama-server CLI documentation**. They are not applied per HTTP request. Set them when starting `llama-server`.
 
 🗄️ Memory & Context
 
@@ -446,9 +304,9 @@ Possible model configurations that can be passed to the `config_override` input.
 | repeat_penalty | float | 1.1 | Penalty for repeating tokens. Values >1 discourage repetition loops. 1.1 is mild, 1.5+ is aggressive |
 | presence_penalty | float | 0.0 | Penalty based on token presence. Positive values encourage new topics, negative favor repetition |
 | frequency_penalty | float | 0.0 | Penalty based on token frequency. Positive values reduce repetition of common words |
-| enable_thinking | bool | False | Enable thinking/reasoning process for Gemma, Qwen, MiniCPM, GLM models. Requires more output tokens |
-| remove_thinking | bool | False | Cleans model output by removing `<think>...</think>` or <|channel>...<channel|> sections. |
-| force_reasoning | bool | False | For Qwen3: force reasoning mode even on simple queries. Makes model always "think" before answering |
+| enable_thinking | bool | False | Enable thinking. Sent as `chat_template_kwargs.enable_thinking` and (when off) `reasoning_effort: "none"`. The GGUF Jinja template decides the exact tags |
+| remove_thinking | bool | False | Cleans model output by removing `<think>...</think>` or reasoning_content |
+| force_reasoning | bool | False | Same as enable_thinking=true for Qwen3-VL. Forces reasoning even on simple queries |
 | words_to_ban | string | "" | Comma-separated list of banned words. Applies logit_bias of -100 to their tokens. Example: woman,Woman,man,Man |
 
 ⚙️ Hardware & Acceleration
@@ -469,7 +327,7 @@ Possible model configurations that can be passed to the `config_override` input.
 
 | Field | Type | Default | Description |
 |--------|--------|--------|--------|
-| chat_handler | dropdown/string | "none" | Chat handler for multimodal models: gemma4, qwen35, qwen3, qwen25, llava16, minicpmv45, etc. Required for vision models |
+| chat_handler | dropdown/string | "none" | Legacy llama-cpp-python handler name. **Ignored.** llama-server uses the Jinja chat template stored in the GGUF |
 | chat_format | dropdown/string | "none" | Chat format for text-only models: llama-2, llama-3, chatml, alpaca, etc. Not needed if chat_handler is set |
 | chat_format_from_gguf | bool | False | Force loading chat template from GGUF metadata. 💡 Does NOT work with images/audio/video |
 | system_prompt_default | string | "" | Default system prompt for the model. Used when no preset or override is provided | 
@@ -527,9 +385,9 @@ Speculative decoding accelerates text generation by using a draft model (or stat
 
 | Field | Type | Default | Description |
 |--------|--------|--------|--------|
-| extract_embedding | bool | False | Switch to embedding extraction mode. Uses LlamaEmbedding. Text output replaced by CONDITIONING tensor |
+| extract_embedding | bool | False | Switch to embedding extraction mode. Calls llama-server `POST /embedding` (fallback `/v1/embeddings`). Text output replaced by CONDITIONING tensor |
 | pooling_type | dropdown/int | 0-NONE | Pooling strategy: -1=UNSPECIFIED (auto), 0=NONE (per-token), 1=MEAN (average), 2=CLS (first token), 3=LAST (last token), 4=RANK (reranking) |
-| tokenizer_path | string | "" | Path to external HuggingFace tokenizer. Overrides built-in llama.cpp tokenizer. May slow performance |
+| tokenizer_path | string | "" | Ignored. Embeddings use the tokenizer inside llama-server |
 | embedding_scale | float | 1.0 | Scalar multiplier for output embedding vector. 1.0 = no scaling. Match magnitude for downstream models |
 | convert_emb_to_cond | bool | False | Wrap embedding into ComfyUI CONDITIONING (hidden_states + attention_mask). Required for SD/Flux conditioning |
 
@@ -1478,73 +1336,42 @@ You can view the net generation time (`eval time` in llama.cpp verbose output) i
 Try enabling debug output:
 ```
 "debug": true
-"verbose": true
 ```
-And use `subprocess` mode. In other modes, some logs may be suppressed by the main system settings.
+Watch the ComfyUI console for HTTP errors from llama-server.
 
 <details>
 
 <summary>troubleshooting</summary>
 
-### 1. Issue: ggml_new_object: not enough space in the context's memory pool (needed 330192, available 16):
+### 1. Issue: llama-server is not reachable
 
-If an error occurs, try it:
-- increase `pool_size`
-- decrease `n_ctx`
+The node cannot connect to `server_url` (default `http://127.0.0.1:8080`).
 
-### 2. Issue: Failed to load shared library 'D:\ComfyUI\python_embeded\Lib\site-packages\llama_cpp\lib\ggml.dll 
+- Start `llama-server` / `llama-server.exe` first
+- Check `--port` matches `server_url`
+- `curl http://127.0.0.1:8080/health` should return `{"status":"ok"}`
+- HTTP 503 = the GGUF is still loading; wait and retry
 
-1. Check that the files `ggml.dll, ggml-base.dll, ggml-cpu.dll, ggml-cuda.dll, llama.dll, mtmd.dll` exist at the specified path.
+### 2. Issue: HTTP 500 / empty / garbage vision answers
 
-2. Check that you have **CUDA Toolkit** installed?
-For example:
-`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0`
-- Try installing: https://developer.nvidia.com/cuda-downloads
-- Сheck **PATH** in Environment Variable to **CUDA Toolkit** (For example: `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin`).
-- After installing CUDA Toolkit, restart your computer.
+- Confirm llama-server was started with **both** `-m` and `--mmproj`
+- Use a **current** official llama.cpp build (Qwen3-VL needs a recent mmproj)
+- Increase `--ctx-size` (`-c`) if the prompt + image tokens overflow
+- For thinking models, start with `--jinja` and toggle `enable_thinking` on the node
 
-3. Check that the **NVIDIA Driver** and  CUDA Toolkit versions match:
-Run command in CMD `nvidia-smi`.
+### 3. Issue: GPU / VRAM
 
-4. Check that you have **Visual C++ Redistributable** installed? 
-Try installing: https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170 Install both versions (x86 and x64).
+GPU offload is a llama-server flag, not a ComfyUI widget:
 
-5. If this dll files are **created**, but do not run:
-Download: https://github.com/lucasg/Dependencies/releases
-(select Dependencies_x64_Release.zip).
-Unzip and run **DependenciesGui.exe**.
-Drag the `ggml.dll` (**and other dll**) file into program. 
-Look any red or yellow warnings? 
-
-#### Update: #### 
-**Runtime library detection for GGML CUDA support**
-
-`ggml` requires certain CUDA runtime libraries (e.g., `cudart64_*.dll`, `cublas64_*.dll`) to function properly. These libraries are typically provided by:
-- The **CUDA Toolkit** (system-wide installation), OR
-- An existing **PyTorch** installation (which bundles compatible CUDA runtime libraries in its package folder).
-
-The build scripts now automatically search for these libraries in PyTorch's directory if they are not found in the standard CUDA paths.
-https://github.com/KLL535/ComfyUI_Simple_Qwen3-VL-gguf/issues/15
-
-### 3. Issue: If automatic GPU detection fails
-
-If automatic GPU detection fails, you may need to manually specify your GPU architecture.
-Find your Compute Capability (for example 8.6 for RTX 3050). Replace 86 with your value.
-
-```
-set CMAKE_ARGS=-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=86 
-set FORCE_CMAKE=1
-python -m pip install .
-```
-GPU → CMake Value
-```
-RTX 50-series (Blackwell) → 120
-RTX 40-series → 89
-RTX 30-series → 86
-RTX 20-series → 75
+```bash
+llama-server -m model.gguf --mmproj mmproj.gguf -ngl 99 -c 8192 --port 8080
 ```
 
-https://github.com/KLL535/ComfyUI_Simple_Qwen3-VL-gguf/issues/15
+Lower `-ngl` or `-c` if the server OOMs. Stopping llama-server frees that VRAM for diffusion.
+
+### 4. Issue: ggml_new_object / context too small
+
+This now happens **inside llama-server**. Increase `-c` / `--ctx-size` or lower image resolution / `max_frames`. The old `pool_size` Python setting is not sent over HTTP.
 
 </details>
 
@@ -1552,9 +1379,10 @@ https://github.com/KLL535/ComfyUI_Simple_Qwen3-VL-gguf/issues/15
 
 Maybe it will be useful to someone.
 
-[!] Tested only on Windows. Tested only on RTX5080/RTX2060. Tested on Python 3.13
+[!] Tested against the OpenAI-compatible llama-server API from current `ggml-org/llama.cpp`. Hardware notes in older versions referred to Windows + RTX 5080/2060.
 
 # Dependencies & Thanks:
-- https://github.com/JamePeng/llama-cpp-python
-- https://github.com/ggml-org/llama.cpp
+- https://github.com/ggml-org/llama.cpp (`llama-server`, `libmtmd`, Qwen3-VL)
 - https://huggingface.co/Qwen
+
+No `llama-cpp-python`.

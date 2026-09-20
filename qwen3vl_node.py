@@ -612,27 +612,18 @@ def run_inference_pipeline(script_name, config, mode="subprocess", gccollect = F
     try:
 
         data = None
-        if mode == "subprocess":
-            #subprocess - выгружаем модель keep_vram в начале 
-            unload_model(gccollect, debug, target="keep_vram")
-
-            result = run_script_subprocess(script_name, config, timeout=300)
+        # All modes use HTTP against llama-server. subprocess isolation of llama_cpp
+        # is no longer needed; GGUF VRAM lives in the external server process.
+        if script_name == "qwen3vl_run.py":
+            module = qwen3vl_run
         else:
-            if script_name == "qwen3vl_run.py":
-                module = qwen3vl_run
-            else:
-                return f"[ERROR] Direct execution not supported for script '{script_name}'", None, None
+            return f"[ERROR] Direct execution not supported for script '{script_name}'", None, None
 
-            #Другой скрипт выбран - выгружаем все
-            if _current_module is not None and _current_module != module:
-                unload_model(gccollect, debug, target="all")
+        if _current_module is not None and _current_module != module:
+            unload_model(gccollect, debug, target="all")
 
-            _current_module = module
-            result, data = module.run_inference_direct(config)
-
-            #direct_clean - выгружаем модель в конце 
-            if mode == "direct_clean":
-                unload_model(gccollect, debug, target="keep_vram")
+        _current_module = module
+        result, data = module.run_inference_direct(config)
 
         #Обработка результата
         if result.get("status") == "success":
@@ -861,18 +852,24 @@ class SimpleQwen3VL_GGUF_Node:
                     "default": 42,
                     "tooltip": "Random seed for reproducible generation.",
                 }),
+                "server_url": ("STRING", {
+                    "default": "http://127.0.0.1:8080",
+                    "tooltip": (
+                        "llama-server base URL. This node talks to the OpenAI-compatible "
+                        "/v1/chat/completions API. Start llama-server yourself with -m and --mmproj."
+                    ),
+                }),
                 "unload_all_models": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "If True, clears VRAM/RAM before starting inference to prevent OOM errors.",
+                    "tooltip": "If True, unloads ComfyUI diffusion models before inference to free VRAM. Does not stop llama-server.",
                 }),
                 "mode": (["subprocess", "direct_clean", "keep_vram", "save1", "save2", "save3"], {
-                    "default": "subprocess",
+                    "default": "keep_vram",
                     "tooltip": (
-                        "Execution mode:\n"
-                        "• subprocess — isolates llama.cpp, prevents memory leaks and ComfyUI crashes (INCOMPATIBLE with video inputs).\n"
-                        "• direct_clean — unloads model after inference, no subprocess overhead.\n"
-                        "• keep_vram — keeps model in VRAM for fast sequential batch processing.\n"
-                        "• save1/save2/save3 — auxiliary slots for long-term model storage in VRAM."
+                        "Legacy execution-mode widget kept for existing workflows.\n"
+                        "Inference always uses HTTP against llama-server; the GGUF stays loaded there.\n"
+                        "• keep_vram / save1-3 — natural llama-server mode (model stays on the server).\n"
+                        "• direct_clean / subprocess — same HTTP path; they no longer load/unload a local GGUF."
                     ),
                 }),
                 "bypass": ("BOOLEAN", {
@@ -914,10 +911,9 @@ class SimpleQwen3VL_GGUF_Node:
                 "video": ("*", {
                     "tooltip": (
                         "Input video (Load Video) or image batch. "
-                        "Processed as a reduced set of frames (see 'max_frames'). "
-                        "💡 Requires increased 'n_ctx'. "
-                        "💡 Many frames/files consume more VRAM; smaller models may lose details. "
-                        "⚠️ INCOMPATIBLE with 'subprocess' mode due to large data transfer size."
+                        "Processed as a reduced set of JPEG frames (see 'max_frames'), "
+                        "or as llama-server input_video when native_video is true. "
+                        "💡 Increase llama-server --ctx-size for many frames."
                     ),
                 }),
             },
@@ -934,8 +930,9 @@ class SimpleQwen3VL_GGUF_Node:
             user_prompt,
             seed,
             unload_all_models,
-            mode="subprocess",
+            mode="keep_vram",
             bypass=False,
+            server_url="http://127.0.0.1:8080",
             system_prompt_override=None,
             config_override=None,
             variables=None,
@@ -1015,8 +1012,8 @@ class SimpleQwen3VL_GGUF_Node:
                     if kwargs[key] is not None:
                         input_videos.append(kwargs[key])
 
-            # Обработка изображений и аудио
-            file_mode = (mode == "subprocess")
+            # Images/audio stay in memory and are encoded to base64 data URLs for HTTP.
+            file_mode = False
             images_value = []
             audio_value = []
             video_value = []
@@ -1048,15 +1045,7 @@ class SimpleQwen3VL_GGUF_Node:
                 # file_mode unsopported
                 _debug_print(debug, "process_videos", t_process_videos)
 
-            # Неподдерживаемые сценарии
-            if mode == "subprocess":
-                # streaming_mode не нужен в subprocess режиме
-                config["streaming_mode"] = False
-
-                for val in video_value:
-                    # Если в подпроцесс пытаются передать не путь (строку), а numpy массив
-                    if not isinstance(val, str):
-                        raise ValueError("Subprocess mode unsopported with videos in VideoFromComponents and Raw Tensor formats. Use direct_clean/keep_vram mode.")            
+            # subprocess no longer isolates a local llama.cpp process. Video tensors are fine. 
 
             if (len(images_value) + len(audio_value) + len(video_value)) == 0:
                 config["content_count"] = 0 # Это нужно только для того чтобы форсировать перезагрузку кеша
@@ -1151,7 +1140,13 @@ class SimpleQwen3VL_GGUF_Node:
             script_name, config = old_config_patch(script_name, config)
 
             cache_mode = mode if mode.startswith("save") else "keep_vram"
-            config_str = json.dumps(config, sort_keys=True, ensure_ascii=False).encode('utf-8')
+            if not config.get("server_url"):
+                config["server_url"] = server_url or "http://127.0.0.1:8080"
+            config_str = json.dumps(
+                {k: v for k, v in config.items() if k not in ("images", "audios", "videos")},
+                sort_keys=True,
+                ensure_ascii=False,
+            ).encode("utf-8")
             config_hash = hashlib.sha256(config_str).hexdigest()
 
             # Итоговый конфиг для инференса
@@ -1164,7 +1159,8 @@ class SimpleQwen3VL_GGUF_Node:
                 "audios": audio_value,
                 "videos": video_value,
                 "seed": seed,
-                "config_hash": config_hash
+                "config_hash": config_hash,
+                "server_url": config.get("server_url") or server_url or "http://127.0.0.1:8080",
             }
 
             if not script_name:

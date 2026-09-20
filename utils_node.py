@@ -163,6 +163,11 @@ class UnloadQwenModel:
     RETURN_NAMES = ("output",)
     FUNCTION = "trigger_node"
     CATEGORY = CATEGORY_NAME
+    DESCRIPTION = (
+        "Legacy unload node. GGUF VRAM is owned by llama-server, not ComfyUI. "
+        "This node no longer unloads the LLM; stop llama-server (or POST /models/unload in router mode) to free VRAM. "
+        "It still passes the input through so existing graphs keep working."
+    )
 
     def trigger_node(self, target="all", input=None):
         unload_model(target=target)

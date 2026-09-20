@@ -1,4 +1,8 @@
 # Nightly
+- **BREAKING:** Replace `llama-cpp-python` with native `llama.cpp` `llama-server` over HTTP (`/v1/chat/completions`). ComfyUI no longer loads GGUF files.
+- Add `server_url`, `api_key`, `request_timeout`, and optional `model` settings.
+- Images/audio/video are sent as OpenAI-compatible multimodal parts (base64 data URLs).
+- Thinking maps to llama-server `chat_template_kwargs.enable_thinking` / `reasoning_effort`.
 - Add `answer_delimiter` config
 - Add `streaming_mode`, refactor subprocess mode - the process is now interruptible.
 - Add speculative decoding
