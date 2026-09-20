@@ -98,7 +98,7 @@ class Qwen3VL_GGUF_Node:
             script, config = old_config_patch(script, config)
 
             # 4. Launching the inference pipeline
-            text, conditioning, audio = run_inference_pipeline(script, config)
+            text, conditioning, audio, _swap_log = run_inference_pipeline(script, config)
 
             return (text, conditioning)
 

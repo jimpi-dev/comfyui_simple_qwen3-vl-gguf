@@ -1,5 +1,8 @@
 # Nightly
 - **BREAKING:** Replace `llama-cpp-python` with native `llama.cpp` `llama-server` over HTTP (`/v1/chat/completions`). ComfyUI no longer loads GGUF files.
+- Optional llama-swap support: `use_llama_swap`, `llama_swap_url`, model combobox (`GET /v1/models`), load/swap, and tailed `GET /logs` (`llama_swap_log_lines`, default 200).
+- Status lamp on the inference and unload nodes shows whether llama currently has a GGUF in VRAM.
+- `Simple Qwen Unload` and an Unload button actually free VRAM via llama-swap `POST /api/models/unload` (router `POST /models/unload` fallback).
 - Add `server_url`, `api_key`, `request_timeout`, and optional `model` settings.
 - Images/audio/video are sent as OpenAI-compatible multimodal parts (base64 data URLs).
 - Thinking maps to llama-server `chat_template_kwargs.enable_thinking` / `reasoning_effort`.

@@ -111,6 +111,25 @@ curl http://127.0.0.1:8080/v1/models
 
 The ComfyUI node then posts to `http://127.0.0.1:8080/v1/chat/completions`.
 
+### llama-swap (model switching)
+
+If you already run [llama-swap](https://github.com/mostlygeek/llama-swap) in the LAN:
+
+1. Enable **use_llama_swap** on `🌐 LLM Inference (SQVLM)`.
+2. Set **llama_swap_url** to the swap address, e.g. `http://192.168.0.10:8080` (empty = `server_url`).
+3. Click **Refresh llama-swap models**. The **llama_swap_model** combobox fills from `GET /v1/models`.
+4. Pick a model. On queue the node loads it (`POST /api/models/load/{id}` or `GET /upstream/{id}`) and then calls `/v1/chat/completions` with that `model` name so llama-swap swaps if needed.
+5. **llama_swap_log_lines** (default 200) tails `GET /logs` into the `llama_swap_log` output and the on-node preview.
+6. A **status lamp** (title + row) is green when a GGUF is in VRAM, yellow while loading, grey when idle, red when the proxy is offline.
+7. **Unload llama model (free VRAM)** or the **Simple Qwen Unload** node calls `POST /api/models/unload` so ComfyUI diffusion can use the GPU. Put Unload after inference and before Load Checkpoint.
+
+```bash
+curl http://192.168.0.10:8080/v1/models
+curl http://192.168.0.10:8080/running
+curl -X POST http://192.168.0.10:8080/api/models/unload
+curl http://192.168.0.10:8080/logs
+```
+
 Official docs:
 - llama.cpp: https://github.com/ggml-org/llama.cpp
 - Multimodal: https://github.com/ggml-org/llama.cpp/blob/master/docs/multimodal.md
@@ -159,7 +178,7 @@ Images are converted `ComfyUI IMAGE → JPEG → base64 data URL → OpenAI mult
 - **Master Prompt Loader** - Loads system prompt presets from JSON configuration files. Supports override via an optional string input. Ensures consistency across complex workflows.
 - **Simple Style Selector** - Loads user prompt style presets. Can randomly select a style or apply a named preset, appending it to the user prompt for dynamic generation variation.
 - **Simple Camera Selector** - Similar to Style Selector, but for camera-related descriptions (lens, lighting, angle). Appends photographic context to the user prompt.
-- **Simple Qwen Unload** - Legacy pass-through. llama-server owns the GGUF; stopping the server (or router `POST /models/unload`) frees VRAM. Kept so old graphs still run.
+- **Simple Qwen Unload** - Unloads the GGUF from llama-swap (`POST /api/models/unload`) or llama-server router (`POST /models/unload`) so a later Load Checkpoint can use the VRAM. Passthrough input still orders the graph. Status lamp shows whether a model is loaded.
 - **Simple Remove Think** - Cleans model output by removing `<think>...</think>` sections. Designed for reasoning models (DeepSeek-R1, Qwen-thinking) to return only the final, cleaned response.
 - **Simple Trigger Node** - Enforces execution order in complex workflows. Prevents heavy nodes (like `Load Checkpoint`) from executing prematurely and occupying VRAM unnecessarily.
 - **Simple Text To Batch** - Splits LLM output by a given separator into a text batch, allowing you to extract multiple scenes or items from a single request.
@@ -193,7 +212,7 @@ A universal version. The model and its parameters mast be passed to the `config_
 | keep_vram (default) | HTTP to llama-server. The GGUF stays loaded in the server process. | Natural architecture. Repeated requests reuse the already-loaded model and mmproj. |
 | subprocess / direct_clean / save1-save3 | Kept for existing workflows. Inference is still HTTP; these modes no longer load or unload a local GGUF. | Old graphs keep working. VRAM of the LLM is controlled by llama-server, not by this widget. |
 
-> Stop llama-server when you need the GPU back for a heavy diffusion checkpoint. The ComfyUI node cannot unload the server-side model in single-model mode.
+> With llama-swap, use **Unload llama model** on the inference node or **Simple Qwen Unload** after the LLM step to free GGUF VRAM before a heavy diffusion checkpoint. A single-model llama-server started with `-m` cannot unload remotely — stop that process instead.
 
 
 </details>

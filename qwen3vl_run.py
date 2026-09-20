@@ -31,6 +31,7 @@ from llama_server_client import (
     parse_chat_message,
     parse_completion_text,
 )
+from llama_swap_client import LlamaSwapClient, is_placeholder_model
 
 # Kept for UnloadQwenModel / cache_mode compatibility. The LLM itself lives in llama-server.
 _model_caches = {
@@ -391,6 +392,10 @@ def _debug_calc_speed(result, exec_time):
 
 
 def _resolve_model_name(config: dict) -> str:
+    if config.get("use_llama_swap"):
+        swap_model = (config.get("llama_swap_model") or "").strip()
+        if not is_placeholder_model(swap_model):
+            return swap_model
     model = (config.get("model") or "").strip()
     if model:
         return model
@@ -398,6 +403,14 @@ def _resolve_model_name(config: dict) -> str:
     if model_path:
         return Path(model_path).name
     return "local"
+
+
+def _apply_llama_swap_url(config: dict) -> None:
+    if not config.get("use_llama_swap"):
+        return
+    swap_url = (config.get("llama_swap_url") or config.get("server_url") or "").strip()
+    if swap_url:
+        config["server_url"] = swap_url
 
 
 def _resolve_timeout(config: dict) -> float:
@@ -636,6 +649,27 @@ def _make_client(config: dict) -> LlamaServerClient:
     )
 
 
+def _safe_swap_logs(config: dict, model_name: str = "") -> str:
+    if not config.get("use_llama_swap"):
+        return ""
+    try:
+        lines = int(config.get("llama_swap_log_lines", 200) or 200)
+    except (TypeError, ValueError):
+        lines = 200
+    try:
+        url = config.get("llama_swap_url") or config.get("server_url") or DEFAULT_SERVER_URL
+        swap = LlamaSwapClient(url, api_key=config.get("api_key") or "", timeout=15)
+        return swap.get_logs(max_lines=lines, model_id=model_name)
+    except Exception as e:
+        return f"[llama-swap logs unavailable: {e}]"
+
+
+def _with_swap_log(result: dict, config: dict, model_name: str = "") -> dict:
+    if isinstance(result, dict) and "llama_swap_log" not in result:
+        result["llama_swap_log"] = _safe_swap_logs(config, model_name)
+    return result
+
+
 def _warn_ignored_local_loader_settings(config: dict, debug: bool) -> None:
     ignored = []
     if config.get("n_gpu_layers") not in (None, -1):
@@ -696,6 +730,9 @@ def _inference(config):
         if num_content:
             content_text = f"(with {num_images}/{num_audios}/{num_videos} image/audio/video)"
 
+        _apply_llama_swap_url(config)
+        use_llama_swap = bool(config.get("use_llama_swap"))
+
         t_client = time.perf_counter()
         client = _make_client(config)
         _debug_print(debug, f"llama-server {client.base_url}", t_client, file=sys.stderr)
@@ -704,18 +741,36 @@ def _inference(config):
         try:
             client.ensure_ready()
         except LlamaServerError as e:
-            return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}, None
+            return _with_swap_log({"status": "error", "message": str(e), "traceback": traceback.format_exc()}, config, ""), None
+
+        model_name = _resolve_model_name(config)
+
+        if use_llama_swap and not is_placeholder_model(config.get("llama_swap_model")):
+            t_swap = time.perf_counter()
+            try:
+                swap = LlamaSwapClient(
+                    client.base_url,
+                    api_key=config.get("api_key") or "",
+                    timeout=_resolve_timeout(config),
+                )
+                swap.load_model(model_name)
+                _debug_print(debug, f"llama-swap load {model_name}", t_swap, file=sys.stderr)
+            except Exception as e:
+                return _with_swap_log({
+                    "status": "error",
+                    "message": f"llama-swap could not load model '{model_name}': {e}",
+                    "traceback": traceback.format_exc(),
+                }, config, model_name), None
 
         output = ""
         output_data = None
         data_type = 0
-        model_name = _resolve_model_name(config)
 
         if extract_tts:
-            return {
+            return _with_swap_log({
                 "status": "error",
                 "message": "extract_tts is not supported with the llama-server HTTP backend.",
-            }, None
+            }, config, model_name), None
 
         if extract_embedding:
             t_emb = time.perf_counter()
@@ -763,7 +818,7 @@ def _inference(config):
             except Exception as e:
                 print(f"[WARNING] Embedding extraction failed: {e}", file=sys.stderr)
             _debug_print(debug, "get embedding", t_emb, file=sys.stderr)
-            return {"status": "success", "output": output, "data_type": data_type}, output_data
+            return _with_swap_log({"status": "success", "output": output, "data_type": data_type}, config, model_name), output_data
 
         sampling = _sampling_payload(config)
         logit_bias = _logit_bias_from_banned_words(client, config.get("words_to_ban"), debug=debug)
@@ -841,20 +896,20 @@ def _inference(config):
         if config.get("debug_output", False):
             print(f"[DEBUG] LLM output: {output}", file=sys.stderr)
 
-        return {"status": "success", "output": output, "data_type": data_type}, output_data
+        return _with_swap_log({"status": "success", "output": output, "data_type": data_type}, config, model_name), output_data
 
     except LlamaServerError as e:
-        return {
+        return _with_swap_log({
             "status": "error",
             "message": str(e),
             "traceback": traceback.format_exc(),
-        }, None
+        }, config, config.get("llama_swap_model") or ""), None
     except Exception as e:
-        return {
+        return _with_swap_log({
             "status": "error",
             "message": str(e),
             "traceback": traceback.format_exc(),
-        }, None
+        }, config, config.get("llama_swap_model") or ""), None
 
 
 def run_inference_direct(config):
@@ -862,24 +917,31 @@ def run_inference_direct(config):
     return _inference(config)
 
 
-def unload_llama_model(gccollect, debug=False, target="all"):
-    """No longer unloads a local GGUF. llama-server owns the model.
-
-    POST /models/unload exists only in llama-server router mode. Phase 1 leaves
-    the server running. This function keeps the old signature so UnloadQwenModel
-    does not break existing graphs.
-    """
+def unload_llama_model(gccollect, debug=False, target="all", server_url=None, model_id=None):
+    """Clear local caches and remotely unload the GGUF (llama-swap / router)."""
     global _model_caches
     targets = list(_model_caches.keys()) if target == "all" else ([target] if target in _model_caches else [])
     for key in targets:
         _model_caches[key]["llm"] = None
         _model_caches[key]["hash"] = None
+
+    url = (server_url or "").strip()
+    if url:
+        from llama_swap_client import unload_models
+        result = unload_models(url, model_id=model_id)
+        _debug_info(debug, "unload_llama_model", text=str(result), file=sys.stderr)
+        if gccollect:
+            t_start = time.perf_counter()
+            gc.collect()
+            _debug_print(debug, "gc.collect", t_start, file=sys.stderr)
+        return result
+
     _debug_info(
         debug,
         "unload_llama_model",
         text=(
-            "llama-server keeps the GGUF loaded. Stop llama-server (or POST /models/unload "
-            "in router mode) to free VRAM. ComfyUI no longer holds a local llama.cpp handle."
+            "No server_url: only local caches were cleared. "
+            "Pass the llama-swap / llama-server URL to free GGUF VRAM."
         ),
         file=sys.stderr,
     )
@@ -887,6 +949,7 @@ def unload_llama_model(gccollect, debug=False, target="all"):
         t_start = time.perf_counter()
         gc.collect()
         _debug_print(debug, "gc.collect", t_start, file=sys.stderr)
+    return {"success": False, "message": "no server_url"}
 
 
 original_stdout_fd = None
