@@ -917,24 +917,31 @@ def run_inference_direct(config):
     return _inference(config)
 
 
-def unload_llama_model(gccollect, debug=False, target="all"):
-    """No longer unloads a local GGUF. llama-server owns the model.
-
-    POST /models/unload exists only in llama-server router mode. Phase 1 leaves
-    the server running. This function keeps the old signature so UnloadQwenModel
-    does not break existing graphs.
-    """
+def unload_llama_model(gccollect, debug=False, target="all", server_url=None, model_id=None):
+    """Clear local caches and remotely unload the GGUF (llama-swap / router)."""
     global _model_caches
     targets = list(_model_caches.keys()) if target == "all" else ([target] if target in _model_caches else [])
     for key in targets:
         _model_caches[key]["llm"] = None
         _model_caches[key]["hash"] = None
+
+    url = (server_url or "").strip()
+    if url:
+        from llama_swap_client import unload_models
+        result = unload_models(url, model_id=model_id)
+        _debug_info(debug, "unload_llama_model", text=str(result), file=sys.stderr)
+        if gccollect:
+            t_start = time.perf_counter()
+            gc.collect()
+            _debug_print(debug, "gc.collect", t_start, file=sys.stderr)
+        return result
+
     _debug_info(
         debug,
         "unload_llama_model",
         text=(
-            "llama-server keeps the GGUF loaded. Stop llama-server (or POST /models/unload "
-            "in router mode) to free VRAM. ComfyUI no longer holds a local llama.cpp handle."
+            "No server_url: only local caches were cleared. "
+            "Pass the llama-swap / llama-server URL to free GGUF VRAM."
         ),
         file=sys.stderr,
     )
@@ -942,6 +949,7 @@ def unload_llama_model(gccollect, debug=False, target="all"):
         t_start = time.perf_counter()
         gc.collect()
         _debug_print(debug, "gc.collect", t_start, file=sys.stderr)
+    return {"success": False, "message": "no server_url"}
 
 
 original_stdout_fd = None

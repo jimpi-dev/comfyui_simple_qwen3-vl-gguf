@@ -16,14 +16,23 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import qwen3vl_run
-from llama_swap_client import LlamaSwapClient, parse_model_list, snapshot, tail_log_text
+from llama_swap_client import (
+    LlamaSwapClient,
+    parse_model_list,
+    parse_running,
+    probe_status,
+    snapshot,
+    tail_log_text,
+    unload_models,
+)
 
 
 class MockLlamaSwap:
-    def __init__(self, support_load_api: bool = True):
+    def __init__(self, support_load_api: bool = True, flavor: str = "swap"):
         self.requests: List[Dict[str, Any]] = []
         self.loaded = "Qwen3-VL-8B"
         self.support_load_api = support_load_api
+        self.flavor = flavor
         self._httpd = None
         self._thread = None
         parent = self
@@ -51,7 +60,10 @@ class MockLlamaSwap:
                 parent.requests.append({"method": "GET", "path": self.path})
                 path = self.path.split("?", 1)[0]
                 if path == "/health":
-                    self._send(200, "OK", "text/plain")
+                    if parent.flavor == "server":
+                        self._send(200, {"status": "ok"})
+                    else:
+                        self._send(200, "OK", "text/plain")
                     return
                 if path in ("/v1/models", "/models"):
                     self._send(200, {
@@ -62,7 +74,13 @@ class MockLlamaSwap:
                     })
                     return
                 if path == "/running":
-                    self._send(200, {"running": [{"model": parent.loaded}]})
+                    if parent.flavor == "server":
+                        self._send(404, {"error": {"message": "not found"}})
+                        return
+                    if parent.loaded:
+                        self._send(200, {"running": [{"model": parent.loaded, "state": "ready"}]})
+                    else:
+                        self._send(200, {"running": []})
                     return
                 if path == "/logs":
                     self._send(200, parent.log_text, "text/plain")
@@ -90,6 +108,14 @@ class MockLlamaSwap:
                     model = unquote(path[len("/api/models/load/"):])
                     parent.loaded = model
                     self._send(200, {"success": True, "model": model})
+                    return
+                if path in ("/api/models/unload", "/models/unload"):
+                    parent.loaded = None
+                    self._send(200, {"success": True})
+                    return
+                if path.startswith("/api/models/unload/"):
+                    parent.loaded = None
+                    self._send(200, {"success": True})
                     return
                 if path.startswith("/v1/chat/completions"):
                     self._send(200, {
@@ -122,6 +148,15 @@ class TestLlamaSwapHelpers(unittest.TestCase):
     def test_parse_running(self):
         names = parse_model_list({"running": [{"model": "Qwen3-VL-8B"}]})
         self.assertEqual(names, ["Qwen3-VL-8B"])
+        loaded, loading = parse_running({"running": [{"model": "Qwen3-VL-8B", "state": "ready"}]})
+        self.assertEqual(loaded, ["Qwen3-VL-8B"])
+        self.assertFalse(loading)
+        loaded, loading = parse_running({"model": "Qwen3-VL-8B", "state": "starting"})
+        self.assertEqual(loaded, ["Qwen3-VL-8B"])
+        self.assertTrue(loading)
+        loaded, loading = parse_running({"running": []})
+        self.assertEqual(loaded, [])
+        self.assertFalse(loading)
 
     def test_tail_log_text(self):
         text = "\n".join(f"L{i}" for i in range(1, 11))
@@ -185,6 +220,38 @@ class TestLlamaSwapClient(unittest.TestCase):
         from llama_server_client import LlamaServerClient
         health = LlamaServerClient(srv.url, timeout=5).health()
         self.assertEqual(health.get("status"), "ok")
+        self.assertTrue(health.get("plain"))
+
+    def test_status_and_unload(self):
+        srv = MockLlamaSwap()
+        self.addCleanup(srv.close)
+        st = probe_status(srv.url, timeout=5)
+        self.assertTrue(st["reachable"])
+        self.assertTrue(st["loaded"])
+        self.assertEqual(st["source"], "llama-swap")
+        self.assertIn("Qwen3-VL-8B", st["running"])
+
+        out = unload_models(srv.url, timeout=5)
+        self.assertTrue(out["success"])
+        self.assertIsNone(srv.loaded)
+        st2 = probe_status(srv.url, timeout=5)
+        self.assertTrue(st2["reachable"])
+        self.assertFalse(st2["loaded"])
+        self.assertEqual(st2["message"], "idle")
+
+        client = LlamaSwapClient(srv.url, timeout=5)
+        client.load_model("Gemma4-E4B")
+        self.assertEqual(srv.loaded, "Gemma4-E4B")
+        qwen3vl_run.unload_llama_model(False, debug=False, server_url=srv.url)
+        self.assertIsNone(srv.loaded)
+
+    def test_status_llama_server_health_means_loaded(self):
+        srv = MockLlamaSwap(flavor="server")
+        self.addCleanup(srv.close)
+        st = probe_status(srv.url, timeout=5)
+        self.assertTrue(st["reachable"])
+        self.assertTrue(st["loaded"])
+        self.assertEqual(st["source"], "llama-server")
 
 
 if __name__ == "__main__":

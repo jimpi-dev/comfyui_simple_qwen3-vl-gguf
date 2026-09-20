@@ -1209,8 +1209,18 @@ class SimpleQwen3VL_GGUF_Node:
             if swap_log:
                 print(f"[llama-swap log]\n{swap_log}", file=sys.stderr)
 
+            llama_status = {}
+            try:
+                from llama_swap_client import probe_status
+                llama_status = probe_status(final_config.get("server_url") or server_url or "http://127.0.0.1:8080")
+            except Exception:
+                pass
+
             return {
-                "ui": {"llama_swap_log": [swap_log]},
+                "ui": {
+                    "llama_swap_log": [swap_log],
+                    "llama_status": [json.dumps(llama_status, ensure_ascii=False)],
+                },
                 "result": (text, conditioning, system_prompt, user_prompt, swap_log),
             }
 

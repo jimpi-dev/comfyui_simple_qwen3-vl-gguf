@@ -1,5 +1,6 @@
 # utils_node.py
 import re
+import sys
 import time
 import hashlib
 import random
@@ -151,10 +152,25 @@ class SimpleCameraSelector:
 
 class UnloadQwenModel:
     @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float(time.time())
+
+    @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "target": (["all", "keep_vram", "save1", "save2", "save3"], {"default": "all"}),
+                "server_url": ("STRING", {
+                    "default": "http://127.0.0.1:8080",
+                    "tooltip": (
+                        "llama-swap or llama-server URL. Unloads the GGUF so ComfyUI "
+                        "diffusion can use the VRAM. llama-swap: POST /api/models/unload."
+                    ),
+                }),
+                "model": ("STRING", {
+                    "default": "",
+                    "tooltip": "Model id to unload. Empty = unload all running models.",
+                }),
                 "input": (anytype, {"default": None, "tooltip": "ANY, input -> output", "forceInput": True}),
             },
         }
@@ -164,14 +180,25 @@ class UnloadQwenModel:
     FUNCTION = "trigger_node"
     CATEGORY = CATEGORY_NAME
     DESCRIPTION = (
-        "Legacy unload node. GGUF VRAM is owned by llama-server, not ComfyUI. "
-        "This node no longer unloads the LLM; stop llama-server (or POST /models/unload in router mode) to free VRAM. "
-        "It still passes the input through so existing graphs keep working."
+        "Unload the GGUF from llama-swap / llama-server so ComfyUI generation can use the VRAM. "
+        "Place after LLM Inference and before Load Checkpoint. "
+        "llama-swap: POST /api/models/unload. llama-server router: POST /models/unload. "
+        "A single-model llama-server started with -m cannot unload without stopping the process."
     )
 
-    def trigger_node(self, target="all", input=None):
+    def trigger_node(self, target="all", server_url="http://127.0.0.1:8080", model="", input=None):
+        from .llama_swap_client import unload_models
+
         unload_model(target=target)
-        return (input,)
+        url = (server_url or "").strip()
+        status = {}
+        if url:
+            status = unload_models(url, model_id=model)
+            print(f"[SimpleQwenVL] unloaded llama model: {status}", file=sys.stderr)
+        return {
+            "ui": {"llama_status": [json.dumps(status, ensure_ascii=False)]},
+            "result": (input,),
+        }
 
 class SimpleTriggerNode:
     @classmethod

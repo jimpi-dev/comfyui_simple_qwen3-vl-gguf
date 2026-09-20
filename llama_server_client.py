@@ -210,8 +210,8 @@ class LlamaServerClient:
         if isinstance(body, dict):
             return body
         text = str(body or "").strip()
-        if not text or text.upper() in ("OK", "OK.", '{"STATUS":"OK"}'):
-            return {"status": "ok"}
+        if not text or text.upper() in ("OK", "OK."):
+            return {"status": "ok", "plain": True}
         try:
             parsed = json.loads(text)
             if isinstance(parsed, dict):
