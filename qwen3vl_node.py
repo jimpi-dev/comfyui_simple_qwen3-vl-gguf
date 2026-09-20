@@ -608,7 +608,7 @@ def run_script_subprocess(script_name, config, timeout=300):
 def run_inference_pipeline(script_name, config, mode="subprocess", gccollect = False, debug = False):
     global _current_module
     if not script_name:
-        return "[ERROR] Script name is not defined", None, None
+        return "[ERROR] Script name is not defined", None, None, ""
     try:
 
         data = None
@@ -617,7 +617,7 @@ def run_inference_pipeline(script_name, config, mode="subprocess", gccollect = F
         if script_name == "qwen3vl_run.py":
             module = qwen3vl_run
         else:
-            return f"[ERROR] Direct execution not supported for script '{script_name}'", None, None
+            return f"[ERROR] Direct execution not supported for script '{script_name}'", None, None, ""
 
         if _current_module is not None and _current_module != module:
             unload_model(gccollect, debug, target="all")
@@ -661,7 +661,7 @@ def run_inference_pipeline(script_name, config, mode="subprocess", gccollect = F
             if data_type == 2 and data is not None:
                 pass
 
-            return text, conditioning, audio
+            return text, conditioning, audio, result.get("llama_swap_log", "")
         else:
             error_msg = result.get('message', 'Unknown error')
             output_msg = f"❌ Inference failed:\n{error_msg}\nCheck console for details."
@@ -675,7 +675,7 @@ def run_inference_pipeline(script_name, config, mode="subprocess", gccollect = F
             unload_model(False, debug, target="all")
             clear_memory(True, debug)
 
-            return output_msg, None, None
+            return output_msg, None, None, result.get("llama_swap_log", "")
     except Exception as e:
         error_msg = f"Unexpected error: {e}"
         output_msg = f"❌ Inference failed:\n{error_msg}\nCheck console for details."
@@ -688,7 +688,7 @@ def run_inference_pipeline(script_name, config, mode="subprocess", gccollect = F
         unload_model(False, debug, target="all")
         clear_memory(True, debug)
 
-        return output_msg, None, None
+        return output_msg, None, None, ""
 
 def unload_model(gccollect = False, debug = False, target="keep_vram"):
     global _current_module
@@ -855,9 +855,32 @@ class SimpleQwen3VL_GGUF_Node:
                 "server_url": ("STRING", {
                     "default": "http://127.0.0.1:8080",
                     "tooltip": (
-                        "llama-server base URL. This node talks to the OpenAI-compatible "
-                        "/v1/chat/completions API. Start llama-server yourself with -m and --mmproj."
+                        "llama-server or llama-swap base URL. "
+                        "When llama-swap is enabled, llama_swap_url is used instead if set."
                     ),
+                }),
+                "use_llama_swap": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": (
+                        "Use llama-swap as a model router. Lists models from the swap URL, "
+                        "loads the selected model before inference, and can show upstream logs."
+                    ),
+                }),
+                "llama_swap_url": ("STRING", {
+                    "default": "",
+                    "placeholder": "http://192.168.0.10:8080",
+                    "tooltip": "llama-swap network address. Empty = use server_url.",
+                }),
+                "llama_swap_model": (["(none)"], {
+                    "default": "(none)",
+                    "tooltip": "Model id from llama-swap GET /v1/models. Refresh fills this combobox.",
+                }),
+                "llama_swap_log_lines": ("INT", {
+                    "default": 200,
+                    "min": 0,
+                    "max": 5000,
+                    "step": 10,
+                    "tooltip": "How many trailing llama-swap log lines to show (GET /logs).",
                 }),
                 "unload_all_models": ("BOOLEAN", {
                     "default": False,
@@ -919,8 +942,8 @@ class SimpleQwen3VL_GGUF_Node:
             },
         }
 
-    RETURN_TYPES = ("STRING", "CONDITIONING", "STRING", "STRING")
-    RETURN_NAMES = ("text", "conditioning", "system_prompt", "user_prompt")
+    RETURN_TYPES = ("STRING", "CONDITIONING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("text", "conditioning", "system_prompt", "user_prompt", "llama_swap_log")
     FUNCTION = "run"
     CATEGORY = CATEGORY_NAME
 
@@ -933,6 +956,10 @@ class SimpleQwen3VL_GGUF_Node:
             mode="keep_vram",
             bypass=False,
             server_url="http://127.0.0.1:8080",
+            use_llama_swap=False,
+            llama_swap_url="",
+            llama_swap_model="(none)",
+            llama_swap_log_lines=200,
             system_prompt_override=None,
             config_override=None,
             variables=None,
@@ -940,7 +967,7 @@ class SimpleQwen3VL_GGUF_Node:
             **kwargs):
 
         if bypass:
-            return (user_prompt, None, "", "")
+            return (user_prompt, None, "", "", "")
 
         t_total0 = time.perf_counter()
         temp_paths = []
@@ -1142,6 +1169,16 @@ class SimpleQwen3VL_GGUF_Node:
             cache_mode = mode if mode.startswith("save") else "keep_vram"
             if not config.get("server_url"):
                 config["server_url"] = server_url or "http://127.0.0.1:8080"
+            config["use_llama_swap"] = bool(use_llama_swap) or bool(config.get("use_llama_swap"))
+            if llama_swap_url and str(llama_swap_url).strip():
+                config["llama_swap_url"] = str(llama_swap_url).strip()
+            elif config.get("use_llama_swap") and not config.get("llama_swap_url"):
+                config["llama_swap_url"] = config.get("server_url")
+            if llama_swap_model:
+                config["llama_swap_model"] = llama_swap_model
+            config["llama_swap_log_lines"] = llama_swap_log_lines
+            if config.get("use_llama_swap") and config.get("llama_swap_url"):
+                config["server_url"] = config["llama_swap_url"]
             config_str = json.dumps(
                 {k: v for k, v in config.items() if k not in ("images", "audios", "videos")},
                 sort_keys=True,
@@ -1167,9 +1204,15 @@ class SimpleQwen3VL_GGUF_Node:
                 raise ValueError(f"Script {script_name} is not defined")
 
             # Запуск инференса
-            text, conditioning, audio = run_inference_pipeline(script_name, final_config, mode, gccollect, debug = debug)
+            text, conditioning, audio, swap_log = run_inference_pipeline(script_name, final_config, mode, gccollect, debug = debug)
+            swap_log = swap_log or ""
+            if swap_log:
+                print(f"[llama-swap log]\n{swap_log}", file=sys.stderr)
 
-            return (text, conditioning, system_prompt, user_prompt)
+            return {
+                "ui": {"llama_swap_log": [swap_log]},
+                "result": (text, conditioning, system_prompt, user_prompt, swap_log),
+            }
 
         finally:
 

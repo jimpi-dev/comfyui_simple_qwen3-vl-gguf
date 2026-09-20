@@ -7,6 +7,7 @@ from .deprecated_node import Qwen3VL_GGUF_Node
 from .configurator import Qwen3VL_AdvancedConfig, Qwen3VL_PromptPresetConfig, Qwen3VL_ModelConfig, Qwen3VL_SamplingConfig
 from .ideogram4 import Ideogram4JsonPreviewOnImage, Ideogram4JsonSwapCoordinates
 from .video_fragment_loader import SimpleLoadVideoFragment
+from . import llama_swap_client  # noqa: F401  — registers /simpleqwenvl/llama_swap HTTP routes
 
 #from .rag_node import RAG_Collection_Manager
 

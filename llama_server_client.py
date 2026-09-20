@@ -132,8 +132,11 @@ class LlamaServerClient:
         timeout: Optional[float] = None,
         accept: Optional[str] = None,
         stream: bool = False,
+        as_text: bool = False,
     ):
         url = _join(self.base_url, path)
+        if as_text and not accept:
+            accept = "text/plain"
         headers = self._headers({"Accept": accept} if accept else None)
         data = None
         if payload is not None:
@@ -180,20 +183,42 @@ class LlamaServerClient:
             raw = resp.read()
         finally:
             resp.close()
+        if as_text:
+            return raw.decode("utf-8", errors="replace")
         return _decode_json_body(raw)
 
     def health(self) -> Dict[str, Any]:
         try:
-            body = self.request("GET", "/health", timeout=min(HEALTH_TIMEOUT, self.timeout))
+            body = self.request(
+                "GET",
+                "/health",
+                timeout=min(HEALTH_TIMEOUT, self.timeout),
+                as_text=True,
+            )
         except LlamaServerError as e:
             if e.status_code == 503:
                 raise
-            # Some builds only expose /v1/health
             if e.status_code == 404:
-                body = self.request("GET", "/v1/health", timeout=min(HEALTH_TIMEOUT, self.timeout))
+                body = self.request(
+                    "GET",
+                    "/v1/health",
+                    timeout=min(HEALTH_TIMEOUT, self.timeout),
+                    as_text=True,
+                )
             else:
                 raise
-        return body if isinstance(body, dict) else {"status": "ok", "raw": body}
+        if isinstance(body, dict):
+            return body
+        text = str(body or "").strip()
+        if not text or text.upper() in ("OK", "OK.", '{"STATUS":"OK"}'):
+            return {"status": "ok"}
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        return {"status": "ok", "raw": text}
 
     def list_models(self) -> List[dict]:
         body = self.request("GET", "/v1/models", timeout=min(HEALTH_TIMEOUT, self.timeout))
